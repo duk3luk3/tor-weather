@@ -1,0 +1,3 @@
+[submodule "weather/OnionPy"]
+	path = weather/OnionPy
+	url = git@github.com:duk3luk3/onion-py.git

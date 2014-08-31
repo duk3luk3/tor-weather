@@ -14,8 +14,10 @@ from weatherapp.models import *
 from config import config
 
 from datetime import *
-from onionoo_wrapper.objects import *
-from onionoo_wrapper.utilities import *
+#from onionoo_wrapper.objects import *
+#from onionoo_wrapper.utilities import *
+from onion_py.manager import *
+from onion_py.objects import *
 
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -88,13 +90,13 @@ def get_deploy_time():
 
 def get_relays(doc_type):
     """ Returns a list of relays from Onionoo as corresponding objects """
-    req = OnionooRequest()
+    req = Manager()
     params = {
         'type': 'relay',
         'running': 'true'
     }
-    doc = req.get_response(doc_type, params=params)
-    return doc.document.relays
+    doc = req.query(doc_type, **params)
+    return doc.relays
 
 
 def add_router_entry(relay):
@@ -159,10 +161,10 @@ def check_tshirt_constraints(first_seen_check, exit_check, uptime, bandwidth):
                 return True
 
 
-def check_welcome(relay_index, email_list):
+def check_welcome(relay_tpl):
     """ Implements welcome script functionality and returns welcome email """
-    relay = relays_details[relay_index]
-    if checks.is_stable(relay) and is_recent(relay):
+    relay = relay_tpl[0]
+    if relay.is_stable() and is_recent(relay):
         matches = Router.objects.filter(fingerprint=relay.fingerprint)
         if not matches:
             # New relay so populate Router model and add to email list
@@ -173,18 +175,17 @@ def check_welcome(relay_index, email_list):
                                              relay.fingerprint,
                                              relay.nickname,
                                              checks.check_exitport(relay))
-                email_list.append(email)
-    return email_list
+                return email
 
 
-def check_tshirt(relay_index, email_list):
+def check_tshirt(relay_tpl):
     """ Implements tshirt script functionality and returns tshirt email """
-    relay = relays_details[relay_index]
+    relay = relay_tpl[1]
     first_seen = datetime.strptime(relay.first_seen, TIME_FORMAT)
     first_seen_check = check_first_seen(relay)
     exit_port_check = checks.check_exitport(relay)
-    uptime_percent = get_uptime_percent(relays_uptime[relay_index])
-    avg_bandwidth = get_avg_bandwidth(relays_bandwidth[relay_index])
+    uptime_percent = get_uptime_percent(relay_tpl[1])
+    avg_bandwidth = get_avg_bandwidth(relay_tpl[2])
     if check_tshirt_constraints(first_seen_check,
                                 exit_port_check,
                                 uptime_percent,
@@ -193,9 +194,10 @@ def check_tshirt(relay_index, email_list):
         subscriptions = TShirtSub.objects.filter(
             subscriber__router__fingerprint=relay.fingerprint,
             subscriber__confirmed=True, emailed=False)
+        email = None
         if len(subscriptions) == 0:
             # No subscribers yet; Check and send email to operator only
-            email_id = scraper.deobfuscate_mail(relay)
+            email_id = relay.parse_email()
             operator_sub = TShirtSub.objects.filter(
                 subscriber__router__fingerprint=relay.fingerprint,
                 subscriber__email=email_id, emailed=True)
@@ -212,7 +214,6 @@ def check_tshirt(relay_index, email_list):
                                              checks.check_exitport(relay),
                                              "https://www.torproject.org",
                                              "https://www.torproject.org")
-                email_list.append(email)
             # Find relay entry in the Router model
             matches = Router.objects.filter(fingerprint=relay.fingerprint)
             if not matches:
@@ -243,9 +244,8 @@ def check_tshirt(relay_index, email_list):
                                              exit_port_check,
                                              sub.subscriber.unsubs_auth,
                                              sub.subscriber.pref_auth)
-                email_list.append(email)
                 sub.emailed = True
-    return email_list
+    return email
 
 
 class Command(BaseCommand):
@@ -253,20 +253,24 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         # Fetch relays data from Onionoo
-        global relays_details
-        global relays_uptime
-        global relays_bandwidth
         relays_details = get_relays('details')
         relays_uptime = get_relays('uptime')
         relays_bandwidth = get_relays('bandwidth')
         if not len(relays_details) == len(relays_uptime) == len(relays_bandwidth):
             raise DataError("Inconsistent Onionoo data")
 
+        relays = zip(relays_details, relays_uptime, relays_bandwidth)
+
+        welcome_mails = map(check_welcome, relays)
+        tshirt_mails = map(check_tshirt, relays)
+
+        email_list = list(welcome_mails) + list(tshirt_mails)
+
         # Accumulate emails to be sent
-        email_list = []
-        for relay_index in range(len(relays_details)):
-            email_list = check_welcome(relay_index, email_list)
-            email_list = check_tshirt(relay_index, email_list)
+        #email_list = []
+        #for relay_index in range(len(relays_details)):
+        #    email_list = check_welcome(relay_index, email_list)
+        #    email_list = check_tshirt(relay_index, email_list)
 
         # Send the emails to the selected operators/subscribers
         #send_mass_mail(tuple(email_list), fail_silently=False)
