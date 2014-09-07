@@ -13,19 +13,18 @@ from weatherapp import emails
 from weatherapp.models import *
 
 from datetime import *
-from onionoo_wrapper.objects import *
-from onionoo_wrapper.utilities import *
-
+from onion_py.manager import *
+from onion_py.objects import *
 
 def get_relays():
     """ Returns a list of relays from Onionoo as RelayDetails objects """
-    req = OnionooRequest()
+    req = Manager()
     params = {
         'type': 'relay',
         'fields': 'nickname,fingerprint,observed_bandwidth,running'
     }
-    details_doc = req.get_response('details', params=params)
-    return details_doc.document.relays
+    details_doc = req.query('details', **params)
+    return details_doc.relays
 
 
 def get_low_bandwidth_emails(relay, email_list):
@@ -35,7 +34,7 @@ def get_low_bandwidth_emails(relay, email_list):
         subscriber__confirmed=True)
     for subcription in subscriptions:
         subscriber = subscription.subscriber
-        low_bandwidth_check = checks.is_bandwidth_low(relay, subscription)
+        low_bandwidth_check = relay.is_bandwidth_low(relay, subscription.threshold)
         if low_bandwidth_check is False:
             subscription.emailed = False
         elif subscription.emailed is False:
@@ -48,7 +47,7 @@ def get_low_bandwidth_emails(relay, email_list):
                                            subscriber.unsubs_auth,
                                            subscriber.pref_auth)
             email_list.append(email)
-    return email_list
+        subscription.save()
 
 
 def get_nodedown_emails(relay, email_list):
@@ -74,7 +73,7 @@ def get_nodedown_emails(relay, email_list):
                                                sub.subscriber.pref_auth)
                 email_list.append(email)
                 sub.emailed = True
-    return email_list
+        sub.save
 
 
 class Command(BaseCommand):
@@ -86,8 +85,8 @@ class Command(BaseCommand):
         email_list = []
         for relay in relays:
             if relay.running is True:
-                email_list = get_low_bandwidth_emails(relay, email_list)
-            email_list = get_nodedown_emails(relay, email_list)
+                get_low_bandwidth_emails(relay, email_list)
+            get_nodedown_emails(relay, email_list)
 
         # Send the notification emails to selected subscribers
         #send_mass_mail(tuple(email_list), fail_silently=False)
